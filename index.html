@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analizador de Ingredientes</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/2.1.5/tesseract.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #4CAF50;
+            --error-color: #f44336;
+            --text-color: #333;
+            --background-color: #f5f5f5;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+
+        body {
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+            padding: 1rem;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: var(--primary-color);
+            font-size: 1.8rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .camera-container {
+            position: relative;
+            width: 100%;
+            margin-bottom: 1rem;
+        }
+
+        #video {
+            width: 100%;
+            border-radius: 10px;
+            display: none;
+        }
+
+        #canvas {
+            width: 100%;
+            border-radius: 10px;
+            display: none;
+        }
+
+        .button {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1rem;
+            width: 100%;
+            margin: 0.5rem 0;
+            transition: background-color 0.3s;
+        }
+
+        .button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .button:hover:not(:disabled) {
+            background-color: #45a049;
+        }
+
+        .results {
+            background: white;
+            padding: 1rem;
+            border-radius: 10px;
+            margin-top: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .ingredient-item {
+            border-bottom: 1px solid #eee;
+            padding: 1rem 0;
+        }
+
+        .ingredient-item:last-child {
+            border-bottom: none;
+        }
+
+        .ingredient-name {
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+
+        .ingredient-description {
+            font-size: 0.9rem;
+            margin: 0.5rem 0;
+        }
+
+        .score {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            color: white;
+            margin-left: 0.5rem;
+        }
+
+        .vegan-tag {
+            background-color: var(--primary-color);
+            padding: 0.25rem 0.5rem;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            color: white;
+            margin-left: 0.5rem;
+        }
+
+        .non-vegan-tag {
+            background-color: var(--error-color);
+            padding: 0.25rem 0.5rem;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            color: white;
+            margin-left: 0.5rem;
+        }
+
+        .error-message {
+            background-color: var(--error-color);
+            color: white;
+            padding: 1rem;
+            border-radius: 10px;
+            margin: 1rem 0;
+            text-align: center;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 1rem;
+            display: none;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--primary-color);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 1rem auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Analizador de Ingredientes</h1>
+            <p>Escanea los ingredientes de tus productos</p>
+        </header>
+
+        <div class="camera-container">
+            <video id="video" autoplay playsinline></video>
+            <canvas id="canvas"></canvas>
+        </div>
+
+        <button id="startCamera" class="button">Iniciar Cámara</button>
+        <button id="captureImage" class="button" disabled>Capturar Imagen</button>
+        <button id="analyzeImage" class="button" disabled>Analizar Ingredientes</button>
+
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Analizando ingredientes...</p>
+        </div>
+
+        <div id="error" class="error-message" style="display: none;"></div>
+        <div id="results" class="results" style="display: none;"></div>
+    </div>
+
+    <script>
+        const ingredients_db = {
+            // Base de datos simplificada de ingredientes comunes
+            'azucar': {
+                vegan: true,
+                description: 'Endulzante natural derivado de la caña de azúcar o remolacha',
+                health_score: 3
+            },
+            'sal': {
+                vegan: true,
+                description: 'Mineral utilizado como condimento y conservante',
+                health_score: 5
+            },
+            'leche': {
+                vegan: false,
+                description: 'Producto lácteo de origen animal',
+                health_score: 7
+            },
+            'soja': {
+                vegan: true,
+                description: 'Legumbre rica en proteínas de origen vegetal',
+                health_score: 8
+            },
+            'conservantes': {
+                vegan: true,
+                description: 'Aditivos para prolongar la vida útil del producto',
+                health_score: 4
+            }
+        };
+
+        let stream = null;
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const startButton = document.getElementById('startCamera');
+        const captureButton = document.getElementById('captureImage');
+        const analyzeButton = document.getElementById('analyzeImage');
+        const loadingDiv = document.getElementById('loading');
+        const errorDiv = document.getElementById('error');
+        const resultsDiv = document.getElementById('results');
+
+        // Iniciar la cámara
+        startButton.addEventListener('click', async () => {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment' }
+                });
+                video.srcObject = stream;
+                video.style.display = 'block';
+                startButton.disabled = true;
+                captureButton.disabled = false;
+                errorDiv.style.display = 'none';
+            } catch (err) {
+                showError('Error al acceder a la cámara. Por favor, asegúrate de dar los permisos necesarios.');
+            }
+        });
+
+        // Capturar imagen
+        captureButton.addEventListener('click', () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            
+            video.style.display = 'none';
+            canvas.style.display = 'block';
+            captureButton.disabled = true;
+            analyzeButton.disabled = false;
+
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+        });
+
+        // Analizar imagen
+        analyzeButton.addEventListener('click', async () => {
+            try {
+                loadingDiv.style.display = 'block';
+                analyzeButton.disabled = true;
+                resultsDiv.style.display = 'none';
+                errorDiv.style.display = 'none';
+
+                const result = await Tesseract.recognize(canvas, 'spa');
+                const text = result.data.text.toLowerCase();
+                const ingredients = extractIngredients(text);
+                
+                displayResults(ingredients);
+            } catch (err) {
+                showError('Error al analizar la imagen. Por favor, intenta de nuevo.');
+            } finally {
+                loadingDiv.style.display = 'none';
+            }
+        });
+
+        function extractIngredients(text) {
+            // Simplificado: dividir por comas y limpiar
+            return text.split(',')
+                .map(ingredient => ingredient.trim())
+                .filter(ingredient => ingredient.length > 2);
+        }
+
+        function analyzeIngredient(ingredient) {
+            // Buscar en la base de datos simplificada
+            for (const [key, data] of Object.entries(ingredients_db)) {
+                if (ingredient.includes(key)) {
+                    return {
+                        name: ingredient,
+                        ...data
+                    };
+                }
+            }
+
+            // Ingrediente no encontrado en la base de datos
+            return {
+                name: ingredient,
+                vegan: null,
+                description: 'Información no disponible',
+                health_score: null
+            };
+        }
+
+        function getHealthScoreColor(score) {
+            if (score === null) return '#gray';
+            if (score <= 3) return '#f44336';
+            if (score <= 6) return '#ff9800';
+            return '#4CAF50';
+        }
+
+        function displayResults(ingredients) {
+            resultsDiv.innerHTML = '<h2>Resultados del Análisis</h2>';
+            
+            ingredients.forEach(ingredient => {
+                const analysis = analyzeIngredient(ingredient);
+                const healthScoreColor = getHealthScoreColor(analysis.health_score);
+
+                const ingredientHTML = `
+                    <div class="ingredient-item">
+                        <div class="ingredient-name">
+                            ${analysis.name}
+                            ${analysis.vegan !== null ? 
+                                `<span class="${analysis.vegan ? 'vegan-tag' : 'non-vegan-tag'}">
+                                    ${analysis.vegan ? 'Vegano' : 'No Vegano'}
+                                </span>` : ''
+                            }
+                            ${analysis.health_score !== null ? 
+                                `<span class="score" style="background-color: ${healthScoreColor}">
+                                    Salud: ${analysis.health_score}/10
+                                </span>` : ''
+                            }
+                        </div>
+                        <div class="ingredient-description">${analysis.description}</div>
+                    </div>
+                `;
+                resultsDiv.innerHTML += ingredientHTML;
+            });
+
+            resultsDiv.style.display = 'block';
+        }
+
+        function showError(message) {
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            loadingDiv.style.display = 'none';
+        }
+    </script>
+</body>
+</html>
